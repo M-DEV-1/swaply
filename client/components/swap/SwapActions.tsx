@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Route } from '@/types/route';
+import { Route } from '@/lib/types/route';
 import { useAccount, useWriteContract } from 'wagmi';
 import { ArrowUpDown, Loader2 } from 'lucide-react';
 

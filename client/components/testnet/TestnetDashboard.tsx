@@ -21,7 +21,7 @@ import {
   getTestnetStatus,
   TestnetTestResult 
 } from '@/lib/testnet-setup';
-import { TESTNET_CONFIGS } from '@/lib/testnet-config';
+import { TESTNET_CONFIGS } from '@/lib/testnet/testnet-config';
 
 export default function TestnetDashboard() {
   const [testResults, setTestResults] = useState<TestnetTestResult[]>([]);

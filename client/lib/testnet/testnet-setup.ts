@@ -1,8 +1,8 @@
 // End-to-end testnet testing setup
 import { createTransactionMonitor } from './transaction-monitor';
-import { getTestnetConfig, getTestnetTokens, TESTNET_CONFIGS } from './testnet-config';
-import { pythAPI } from './pyth';
-import { availAPI } from './avail';
+import { getTestnetConfig, getTestnetTokens, TESTNET_CONFIGS } from './testnet/testnet-config';
+import { pythAPI } from './partners/pyth';
+import { availAPI } from './partners/avail';
 
 export interface TestnetTestResult {
   network: string;

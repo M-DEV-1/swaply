@@ -1,8 +1,8 @@
 // Transaction monitoring service integrating Blockscout, Pyth, and Avail
-import { BlockscoutAPI, blockscoutAPIs } from './blockscout';
-import { pythAPI, getTokenPrice } from './pyth';
-import { availAPI } from './avail';
-import { getTestnetConfig } from './testnet-config';
+import { BlockscoutAPI, blockscoutAPIs } from './partners/blockscout';
+import { pythAPI, getTokenPrice } from './partners/pyth';
+import { availAPI } from './partners/avail';
+import { getTestnetConfig } from './testnet/testnet-config';
 
 export interface TransactionStatus {
   hash: string;
