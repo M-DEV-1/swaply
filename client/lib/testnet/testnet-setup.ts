@@ -1,8 +1,7 @@
-// End-to-end testnet testing setup
-import { createTransactionMonitor } from './transaction-monitor';
-import { getTestnetConfig, getTestnetTokens, TESTNET_CONFIGS } from './testnet/testnet-config';
-import { pythAPI } from './partners/pyth';
-import { availAPI } from './partners/avail';
+// End-to-end testnet testing setup aligned with new partners modules
+import { createTransactionMonitor } from '@/lib/testnet/transaction-monitor';
+import { getTestnetConfig, TESTNET_CONFIGS } from '@/lib/testnet/testnet-config';
+import { getPythPrice } from '../partners/pyth';
 
 export interface TestnetTestResult {
   network: string;
@@ -172,9 +171,10 @@ export class TestnetTestSuite implements TestnetTestSuite {
 
   async runPriceFeedTest(): Promise<boolean> {
     try {
-      // Test Pyth price feeds
-      const price = await pythAPI.getLatestPrice('0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace'); // ETH/USD
-      return price && parseFloat(price.price.price) > 0;
+      // Pyth ETH/USD price ID
+      const ETH_USD_ID = '0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace';
+      const price = await getPythPrice(ETH_USD_ID);
+      return !!(price && price.price > 0);
     } catch (error) {
       console.error('Price feed test failed:', error);
       return false;
@@ -183,17 +183,17 @@ export class TestnetTestSuite implements TestnetTestSuite {
 
   async runTransactionMonitoringTest(chainId: number): Promise<boolean> {
     try {
+      // Ensure Blockscout base is configured
+      if (!process.env.NEXT_PUBLIC_BLOCKSCOUT_BASE) return false;
+
       const monitor = createTransactionMonitor(chainId);
-      
-      // Test by getting a recent transaction (this would be a real tx hash in practice)
+      // Use a dummy tx hash; errors are acceptable as long as the call path works
       const testTxHash = '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef';
-      
       try {
         await monitor.getTransactionStatus(testTxHash);
         return true;
-      } catch (error) {
-        // If transaction not found, that's expected for a test hash
-        return true;
+      } catch {
+        return true; // acceptable: tx may not exist on testnet
       }
     } catch (error) {
       console.error('Transaction monitoring test failed:', error);
@@ -203,9 +203,9 @@ export class TestnetTestSuite implements TestnetTestSuite {
 
   async runTokenBalanceTest(chainId: number, address: string): Promise<boolean> {
     try {
+      // Ensure Blockscout base is configured
+      if (!process.env.NEXT_PUBLIC_BLOCKSCOUT_BASE) return false;
       const monitor = createTransactionMonitor(chainId);
-      
-      // Test getting account balance
       const balance = await monitor.getAccountBalance(address);
       return balance !== null;
     } catch (error) {

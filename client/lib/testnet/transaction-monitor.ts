@@ -1,80 +1,25 @@
-// Transaction monitoring service integrating Blockscout, Pyth, and Avail
-import { BlockscoutAPI, blockscoutAPIs } from './partners/blockscout';
-import { pythAPI, getTokenPrice } from './partners/pyth';
-import { availAPI } from './partners/avail';
-import { getTestnetConfig } from './testnet/testnet-config';
+// Transaction monitoring service aligned with new partners modules
+// Note: Blockscout partner module throws if env is missing; import dynamically at call time.
+type BlockscoutMod = typeof import('../partners/blockscout');
+import { getPythPrice } from '../partners/pyth';
+import { getTestnetConfig } from './testnet-config';
 
 export interface TransactionStatus {
   hash: string;
   status: 'pending' | 'confirmed' | 'failed';
   blockNumber?: number;
   gasUsed?: string;
-  gasPrice?: string;
-  timestamp?: number;
-  from: string;
-  to: string;
-  value: string;
-  tokenTransfers?: Array<{
-    token: string;
-    symbol: string;
-    from: string;
-    to: string;
-    value: string;
-    decimals: number;
-  }>;
-  priceImpact?: {
-    token: string;
-    priceBefore: number;
-    priceAfter: number;
-    impact: number;
-  };
-}
-
-export interface SwapRoute {
-  from: {
-    token: string;
-    chain: string;
-    amount: number;
-  };
-  to: {
-    token: string;
-    chain: string;
-    amount: number;
-  };
-  hops: Array<{
-    from: string;
-    to: string;
-    type: 'swap' | 'bridge';
-    dex?: string;
-    bridge?: string;
-    expectedOut: number;
-    feesUSD: number;
-    confidence: number;
-  }>;
-  totalExpectedOut: number;
-  totalGasUSD: number;
-  worstCaseOut: number;
+  avgGasPriceGwei?: number;
 }
 
 export class TransactionMonitor {
-  private blockscoutAPI: BlockscoutAPI;
   private chainId: number;
 
   constructor(chainId: number) {
     this.chainId = chainId;
-    this.blockscoutAPI = this.getBlockscoutAPI(chainId);
   }
 
-  private getBlockscoutAPI(chainId: number): BlockscoutAPI {
-    const config = getTestnetConfig(chainId);
-    if (!config?.blockscoutUrl) {
-      throw new Error(`Blockscout not available for chain ${chainId}`);
-    }
-    
-    return new BlockscoutAPI(config.blockscoutUrl);
-  }
-
-  // Monitor a transaction with real-time updates
+  // Monitor a transaction with periodic polling
   async monitorTransaction(
     txHash: string,
     onUpdate: (status: TransactionStatus) => void,
@@ -82,12 +27,11 @@ export class TransactionMonitor {
     onError: (error: Error) => void
   ): Promise<void> {
     try {
-      // Start monitoring
       const interval = setInterval(async () => {
         try {
           const status = await this.getTransactionStatus(txHash);
           onUpdate(status);
-          
+
           if (status.status === 'confirmed' || status.status === 'failed') {
             clearInterval(interval);
             onComplete(status);
@@ -96,7 +40,7 @@ export class TransactionMonitor {
           clearInterval(interval);
           onError(error as Error);
         }
-      }, 2000); // Check every 2 seconds
+      }, 2000);
 
       // Timeout after 5 minutes
       setTimeout(() => {
@@ -108,210 +52,142 @@ export class TransactionMonitor {
     }
   }
 
-  // Get comprehensive transaction status
+  // Minimal transaction status via Blockscout REST
   async getTransactionStatus(txHash: string): Promise<TransactionStatus> {
-    try {
-      // Get transaction details from Blockscout
-      const tx = await this.blockscoutAPI.getTransaction(txHash);
-      const tokenTransfers = await this.blockscoutAPI.getTokenTransfers(txHash);
-
-      // Get price impact data from Pyth
-      const priceImpact = await this.getPriceImpact(tokenTransfers);
-
-      return {
-        hash: tx.hash,
-        status: tx.status === '1' ? 'confirmed' : tx.isError ? 'failed' : 'pending',
-        blockNumber: parseInt(tx.blockNumber),
-        gasUsed: tx.gasUsed,
-        gasPrice: tx.gasPrice,
-        timestamp: parseInt(tx.timestamp) * 1000,
-        from: tx.from,
-        to: tx.to,
-        value: tx.value,
-        tokenTransfers: tokenTransfers.map(transfer => ({
-          token: transfer.token.address,
-          symbol: transfer.token.symbol,
-          from: transfer.from,
-          to: transfer.to,
-          value: transfer.value,
-          decimals: parseInt(transfer.token.decimals),
-        })),
-        priceImpact,
-      };
-    } catch (error) {
-      throw new Error(`Failed to get transaction status: ${error}`);
-    }
+    const { getTxStatus, getGasPrice: getBlockscoutGasPrice } = await this.getBlockscout();
+    const tx = await getTxStatus(txHash);
+    if (!tx) throw new Error('Transaction not found');
+    const gas = await getBlockscoutGasPrice().catch(() => null);
+    return {
+      hash: tx.hash,
+      status: tx.status,
+      blockNumber: tx.blockNumber,
+      gasUsed: tx.gasUsed,
+      avgGasPriceGwei: gas?.average,
+    };
   }
 
-  // Get price impact for token transfers
-  private async getPriceImpact(tokenTransfers: any[]): Promise<TransactionStatus['priceImpact']> {
-    if (tokenTransfers.length === 0) return undefined;
-
-    try {
-      const transfer = tokenTransfers[0];
-      const symbol = transfer.token.symbol;
-      
-      // Get current price from Pyth
-      const currentPrice = await getTokenPrice(symbol);
-      
-      // For demo purposes, simulate price impact
-      const priceBefore = currentPrice * 0.98; // 2% lower
-      const priceAfter = currentPrice;
-      const impact = ((priceAfter - priceBefore) / priceBefore) * 100;
-
-      return {
-        token: symbol,
-        priceBefore,
-        priceAfter,
-        impact,
-      };
-    } catch (error) {
-      console.warn('Failed to get price impact:', error);
-      return undefined;
-    }
-  }
-
-  // Get account balance with real-time price conversion
-  async getAccountBalance(address: string, tokenAddress?: string): Promise<{
-    balance: string;
-    balanceUSD: number;
+  // Get account balance with optional USD conversion via Pyth
+  async getAccountBalance(
+    address: string,
+    tokenAddress?: string
+  ): Promise<{
+    balance: number; // human-readable units
+    balanceUSD: number | null; // null when price unavailable
     token: {
       symbol: string;
-      name: string;
       decimals: number;
     };
-  }> {
+  } | null> {
     try {
-      let balance: string;
-      let token: any;
-
+      const bs = await this.getBlockscout();
       if (tokenAddress) {
-        // Get ERC-20 token balance
-        balance = await this.blockscoutAPI.getTokenBalance(address, tokenAddress);
-        // In a real implementation, you'd get token info from the contract
-        token = {
-          symbol: 'USDC',
-          name: 'USD Coin',
-          decimals: 6,
-        };
-      } else {
-        // Get native token balance
-        const account = await availAPI.getAccount(address);
-        balance = account.balance;
-        token = {
-          symbol: 'AVL',
-          name: 'Avail Token',
-          decimals: 18,
+        const tb: BlockscoutMod['getTokenBalance'] extends (...args: any) => any ? Awaited<ReturnType<BlockscoutMod['getTokenBalance']>> : never = await bs.getTokenBalance(address, tokenAddress);
+        if (!tb) return null;
+
+        const price = await this.getUsdPriceForSymbol(tb.symbol || 'USDC');
+        return {
+          balance: tb.balance,
+          balanceUSD: price ? tb.balance * price : null,
+          token: { symbol: tb.symbol || 'TKN', decimals: tb.decimals || 18 },
         };
       }
 
-      // Convert to USD using Pyth price feed
-      const balanceNumber = parseFloat(balance) / Math.pow(10, token.decimals);
-      const priceUSD = await getTokenPrice(token.symbol);
-      const balanceUSD = balanceNumber * priceUSD;
+      const native = await bs.getNativeBalance(address);
+      if (native == null) return null;
 
+      const nativeSymbol = getTestnetConfig(this.chainId)?.nativeCurrency.symbol || 'ETH';
+      const price = await this.getUsdPriceForSymbol(nativeSymbol);
       return {
-        balance,
-        balanceUSD,
-        token,
+        balance: native,
+        balanceUSD: price ? native * price : null,
+        token: { symbol: nativeSymbol, decimals: 18 },
       };
     } catch (error) {
       throw new Error(`Failed to get account balance: ${error}`);
     }
   }
 
-  // Get gas price with real-time updates
+  // Gas price via Blockscout oracle (average in gwei) with USD estimation per unit gas
   async getGasPrice(): Promise<{
-    gasPrice: string;
-    gasPriceUSD: number;
+    averageGwei: number;
+    fastGwei: number;
+    slowGwei: number;
+    ethUsd: number | null;
   }> {
     try {
-      const gasPrice = await availAPI.getGasPrice();
-      const gasPriceNumber = parseInt(gasPrice, 16);
-      const gasPriceGwei = gasPriceNumber / 1e9;
-      
-      // Get ETH price for USD conversion
-      const ethPrice = await getTokenPrice('ETH');
-      const gasPriceUSD = (gasPriceGwei / 1e9) * ethPrice;
-
-      return {
-        gasPrice,
-        gasPriceUSD,
-      };
+      const { getGasPrice: getBlockscoutGasPrice } = await this.getBlockscout();
+      const gas = await getBlockscoutGasPrice();
+      const ethUsd = await this.getUsdPriceForSymbol('ETH');
+      return { averageGwei: gas.average, fastGwei: gas.fast, slowGwei: gas.slow, ethUsd };
     } catch (error) {
       throw new Error(`Failed to get gas price: ${error}`);
     }
   }
 
-  // Estimate transaction cost
+  // Estimate transaction cost using RPC eth_estimateGas and Blockscout gas oracle
   async estimateTransactionCost(transaction: {
     from: string;
     to: string;
     value?: string;
     data?: string;
   }): Promise<{
-    gasLimit: string;
-    gasPrice: string;
-    totalCost: string;
-    totalCostUSD: number;
+    gasLimit: number;
+    gasPriceGwei: number;
+    totalCostEth: number;
+    totalCostUSD: number | null;
   }> {
     try {
-      const gasLimit = await availAPI.estimateGas(transaction);
-      const { gasPrice, gasPriceUSD } = await this.getGasPrice();
-      
-      const gasLimitNumber = parseInt(gasLimit, 16);
-      const gasPriceNumber = parseInt(gasPrice, 16);
-      const totalCost = (gasLimitNumber * gasPriceNumber).toString();
-      const totalCostUSD = (gasLimitNumber * gasPriceNumber / 1e18) * (gasPriceUSD / (parseInt(gasPrice, 16) / 1e18));
+      const rpc = getTestnetConfig(this.chainId)?.rpcUrl;
+      if (!rpc) throw new Error('Missing RPC URL for chain');
+
+      const estimateRes = await fetch(rpc, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          method: 'eth_estimateGas',
+          params: [transaction],
+          id: 1,
+        }),
+      });
+      const estimateJson = await estimateRes.json();
+      const gasLimit = parseInt(estimateJson.result, 16);
+
+  const { getGasPrice: getBlockscoutGasPrice } = await this.getBlockscout();
+  const gas = await getBlockscoutGasPrice();
+      const gasPriceGwei = gas.average;
+      const totalCostEth = (gasLimit * gasPriceGwei) / 1e9; // gas * gwei -> ETH
+      const ethUsd = await this.getUsdPriceForSymbol('ETH');
 
       return {
         gasLimit,
-        gasPrice,
-        totalCost,
-        totalCostUSD,
+        gasPriceGwei,
+        totalCostEth,
+        totalCostUSD: ethUsd ? totalCostEth * ethUsd : null,
       };
     } catch (error) {
       throw new Error(`Failed to estimate transaction cost: ${error}`);
     }
   }
 
-  // Get transaction history with price data
-  async getTransactionHistory(address: string, limit = 50): Promise<TransactionStatus[]> {
+  // Currently not supported via partners REST; return empty list
+  async getTransactionHistory(_address: string, _limit = 50): Promise<TransactionStatus[]> {
+    return [];
+  }
+
+  private async getUsdPriceForSymbol(symbol: string): Promise<number | null> {
+    // Default to known Pyth ETH/USD price ID when symbol is ETH
+    const ETH_USD_ID = '0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace';
     try {
-      const transactions = await this.blockscoutAPI.getAccountTransactions(address, limit);
-      
-      const statuses: TransactionStatus[] = [];
-      
-      for (const tx of transactions) {
-        const tokenTransfers = await this.blockscoutAPI.getTokenTransfers(tx.hash);
-        const priceImpact = await this.getPriceImpact(tokenTransfers);
-        
-        statuses.push({
-          hash: tx.hash,
-          status: tx.status === '1' ? 'confirmed' : tx.isError ? 'failed' : 'pending',
-          blockNumber: parseInt(tx.blockNumber),
-          gasUsed: tx.gasUsed,
-          gasPrice: tx.gasPrice,
-          timestamp: parseInt(tx.timestamp) * 1000,
-          from: tx.from,
-          to: tx.to,
-          value: tx.value,
-          tokenTransfers: tokenTransfers.map(transfer => ({
-            token: transfer.token.address,
-            symbol: transfer.token.symbol,
-            from: transfer.from,
-            to: transfer.to,
-            value: transfer.value,
-            decimals: parseInt(transfer.token.decimals),
-          })),
-          priceImpact,
-        });
-      }
-      
-      return statuses;
-    } catch (error) {
-      throw new Error(`Failed to get transaction history: ${error}`);
+      const price = await getPythPrice(symbol === 'ETH' ? ETH_USD_ID : symbol);
+      return price?.price ?? null;
+    } catch {
+      return null;
     }
+  }
+  private async getBlockscout(): Promise<BlockscoutMod> {
+    return await import('../partners/blockscout');
   }
 }
 
