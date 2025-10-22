@@ -1,6 +1,6 @@
 /*
-  Blockscout Integration for BetterETH Router
-  API Docs: https://docs.blockscout.com/devs/apis
+  API Docs:
+  - https://docs.blockscout.com/devs/apis/rest
 */
 
 export interface TokenBalance {
@@ -25,51 +25,68 @@ export interface GasPrice {
   unit: string;
 }
 
-const BLOCKSCOUT_BASE = process.env.NEXT_PUBLIC_BLOCKSCOUT_BASE;
+const BLOCKSCOUT_BASE =
+  process.env.NEXT_PUBLIC_BLOCKSCOUT_BASE;
 
 if (!BLOCKSCOUT_BASE) {
-  throw new Error("BLOCKSCOUT BASE IS NOT DEFINED IN ENV VARIABLES");
+  throw new Error("BLOCKSCOUT_BASE is not defined in environment variables");
 }
 
-// const API_KEY = process.env.NEXT_PUBLIC_BLOCKSCOUT_APIKEY || "";
-// you don't need an API key for basic calls, if within basic limits
-
-/* ---------- 1. Get ERC20 token balance ---------- */
-
+/* ---------- 1. Get ERC20 Token Balance ---------- 
+  /api/v2/tokens/{tokenAddress}/holders/{address}
+*/
 export async function getTokenBalance(
   address: string,
   tokenAddress: string
 ): Promise<TokenBalance | null> {
   try {
-    const url = `${BLOCKSCOUT_BASE}?module=account&action=tokenbalance&contractaddress=${tokenAddress}&address=${address}`;
+    const url = `${BLOCKSCOUT_BASE}/v2/tokens/${tokenAddress}/holders/${address}`;
     const res = await fetch(url);
+    if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
     const json = await res.json();
-    if (json.status !== "1") return null;
 
-    const balance = parseFloat(json.result) / 1e18; // adjust decimals later via token info
-    return { address, tokenAddress, balance };
+    if (!json.balance)
+      return { address, tokenAddress, balance: 0 };
+
+    const decimals = json.token?.decimals ? parseInt(json.token.decimals) : 18;
+    const balance = parseFloat(json.balance) / 10 ** decimals;
+
+    return {
+      address,
+      tokenAddress,
+      balance,
+      symbol: json.token?.symbol,
+      decimals,
+    };
   } catch (err) {
     console.error("Blockscout Balance Error:", err);
     return null;
   }
 }
 
-/* ---------- 2. Get Transaction Status ---------- */
-
+/* ---------- 2. Get Transaction Status ---------- 
+   /api/v2/transactions/{txHash}
+*/
 export async function getTxStatus(txHash: string): Promise<TxStatus | null> {
   try {
-    const url = `${BLOCKSCOUT_BASE}?module=transaction&action=gettxreceiptstatus&txhash=${txHash}`;
+    const url = `${BLOCKSCOUT_BASE}/v2/transactions/${txHash}`;
     const res = await fetch(url);
+    if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
     const json = await res.json();
 
-    if (!json.result)
+    if (!json.hash)
       return { hash: txHash, status: "pending" };
 
     return {
       hash: txHash,
-      status: json.result.status === "1" ? "confirmed" : "failed",
-      blockNumber: parseInt(json.result.blockNumber),
-      gasUsed: json.result.gasUsed,
+      status:
+        json.status === "ok" || json.confirmations > 0
+          ? "confirmed"
+          : json.status === "error"
+          ? "failed"
+          : "pending",
+      blockNumber: json.block_number,
+      gasUsed: json.gas_used?.toString(),
     };
   } catch (err) {
     console.error("Blockscout Tx Error:", err);
@@ -77,32 +94,41 @@ export async function getTxStatus(txHash: string): Promise<TxStatus | null> {
   }
 }
 
-/* ---------- 3. Get Gas Prices ---------- */
-
+/* ---------- 3. Get Gas Prices ----------
+  /api/v1/gas-price-oracle
+   Returns { average: 2.0, fast: 3.0, slow: 1.5 }
+*/
 export async function getGasPrice(): Promise<GasPrice> {
   try {
-    const res = await fetch(`${BLOCKSCOUT_BASE}?module=gastracker&action=gasoracle`);
+    const res = await fetch(`${BLOCKSCOUT_BASE}/v1/gas-price-oracle`);
+    if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
     const json = await res.json();
-    const result = json.result;
+
     return {
-      average: parseFloat(result.SafeGasPrice),
-      fast: parseFloat(result.FastGasPrice),
-      slow: parseFloat(result.ProposeGasPrice),
+      average: json.average,
+      fast: json.fast,
+      slow: json.slow,
       unit: "gwei",
     };
-  } catch {
+  } catch (err) {
+    console.error("Gas Oracle Error:", err);
     return { average: 0, fast: 0, slow: 0, unit: "gwei" };
   }
 }
 
-/* ---------- 4. Validate Address or Contract ---------- */
-
+/* ---------- 4. Verify Contract Status ----------
+  /api/v2/smart-contracts/{address}
+*/
 export async function verifyContract(contractAddress: string): Promise<boolean> {
   try {
-    const res = await fetch(`${BLOCKSCOUT_BASE}?module=contract&action=getsourcecode&address=${contractAddress}`);
+    const url = `${BLOCKSCOUT_BASE}/v2/smart-contracts/${contractAddress}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
     const json = await res.json();
-    return json.status === "1" && json.result.length > 0;
-  } catch {
+
+    return !!(json.address && json.is_verified);
+  } catch (err) {
+    console.error("Contract Verification Error:", err);
     return false;
   }
 }
