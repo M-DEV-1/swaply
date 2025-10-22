@@ -40,7 +40,7 @@ export async function getTokenBalance(
   tokenAddress: string
 ): Promise<TokenBalance | null> {
   try {
-    const url = `${BLOCKSCOUT_BASE}/v2/tokens/${tokenAddress}/holders/${address}`;
+    const url = `${BLOCKSCOUT_BASE}/api/v2/tokens/${tokenAddress}/holders/${address}`;
     const res = await fetch(url);
     if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
     const json = await res.json();
@@ -69,7 +69,7 @@ export async function getTokenBalance(
 */
 export async function getTxStatus(txHash: string): Promise<TxStatus | null> {
   try {
-    const url = `${BLOCKSCOUT_BASE}/v2/transactions/${txHash}`;
+    const url = `${BLOCKSCOUT_BASE}/api/v2/transactions/${txHash}`;
     const res = await fetch(url);
     if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
     const json = await res.json();
@@ -100,7 +100,7 @@ export async function getTxStatus(txHash: string): Promise<TxStatus | null> {
 */
 export async function getGasPrice(): Promise<GasPrice> {
   try {
-    const res = await fetch(`${BLOCKSCOUT_BASE}/v1/gas-price-oracle`);
+    const res = await fetch(`${BLOCKSCOUT_BASE}/api/v1/gas-price-oracle`);
     if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
     const json = await res.json();
 
@@ -121,7 +121,7 @@ export async function getGasPrice(): Promise<GasPrice> {
 */
 export async function verifyContract(contractAddress: string): Promise<boolean> {
   try {
-    const url = `${BLOCKSCOUT_BASE}/v2/smart-contracts/${contractAddress}`;
+    const url = `${BLOCKSCOUT_BASE}/api/v2/smart-contracts/${contractAddress}`;
     const res = await fetch(url);
     if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
     const json = await res.json();
@@ -132,3 +132,22 @@ export async function verifyContract(contractAddress: string): Promise<boolean> 
     return false;
   }
 }
+
+/* ---------- 5. Get Account Balance ----------
+  /api/v2/smart-contracts/{address}
+*/
+export async function getNativeBalance(address: string): Promise<number | null> {
+  try {
+    const res = await fetch(`${BLOCKSCOUT_BASE}/api?module=account&action=balance&address=${address}`);
+    const json = await res.json();
+    if (json.status !== "1") return null;
+
+    // ETH has 18 decimals
+    const balance = parseFloat(json.result) / 1e18;
+    return balance;
+  } catch (err) {
+    console.error("Native ETH Balance Error:", err);
+    return null;
+  }
+}
+ 
