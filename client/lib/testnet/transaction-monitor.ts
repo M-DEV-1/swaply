@@ -1,7 +1,7 @@
 // Transaction monitoring service aligned with new partners modules
 // Note: Blockscout partner module throws if env is missing; import dynamically at call time.
 type BlockscoutMod = typeof import('../partners/blockscout');
-import { getPythPrice } from '../partners/pyth';
+import { fetchSymbolPrice } from '../partners/pyth';
 import { getTestnetConfig } from './testnet-config';
 
 export interface TransactionStatus {
@@ -180,7 +180,7 @@ export class TransactionMonitor {
     // Default to known Pyth ETH/USD price ID when symbol is ETH
     const ETH_USD_ID = '0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace';
     try {
-      const price = await getPythPrice(symbol === 'ETH' ? ETH_USD_ID : symbol);
+      const price = await fetchSymbolPrice(symbol === 'ETH' ? 'ETH/USD' : `${symbol}/USD`);
       return price?.price ?? null;
     } catch {
       return null;

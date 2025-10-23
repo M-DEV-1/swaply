@@ -1,7 +1,7 @@
 // End-to-end testnet testing setup aligned with new partners modules
 import { createTransactionMonitor } from '@/lib/testnet/transaction-monitor';
 import { getTestnetConfig, TESTNET_CONFIGS } from '@/lib/testnet/testnet-config';
-import { getPythPrice } from '../partners/pyth';
+import { fetchSymbolPrice } from '../partners/pyth';
 
 export interface TestnetTestResult {
   network: string;
@@ -173,7 +173,7 @@ export class TestnetTestSuite implements TestnetTestSuite {
     try {
       // Pyth ETH/USD price ID
       const ETH_USD_ID = '0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace';
-      const price = await getPythPrice(ETH_USD_ID);
+      const price = await fetchSymbolPrice('ETH/USD');
       return !!(price && price.price > 0);
     } catch (error) {
       console.error('Price feed test failed:', error);

@@ -24,7 +24,7 @@ export default function SwapPanel() {
     decimals: 6 
   });
   const [amount, setAmount] = useState<number | undefined>(1);
-  const { route, loading, computeRoute } = useRouter();
+  const { route, loading, error, computeRoute } = useRouter();
 
   const { address } = useAccount();
   const { connect, connectors } = useConnect();
@@ -97,6 +97,13 @@ export default function SwapPanel() {
           </Button>
         )}
       </div>
+
+      {error && (
+        <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
+          <div className="text-sm text-red-600 font-medium">Error</div>
+          <div className="text-sm text-red-500">{error}</div>
+        </div>
+      )}
 
       {route && (
         <div className="p-3 bg-muted rounded-lg">
