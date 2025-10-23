@@ -1,66 +1,43 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { Route } from '@/types/route';
+// /client/app/api/route/route.ts
+import { NextRequest, NextResponse } from "next/server";
+import { buildRouteGraph, findBestRoute, Vertex } from "@/lib/core/router";
+import { getAvailableTokens } from "@/lib/partners/pyth-feed";
 
-// Mock route computation - in a real implementation, this would integrate with
-// the routing algorithm from the poc directory
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
-    const { from, to, amount } = body;
-
-    // Simulate route computation delay
-    await new Promise(resolve => setTimeout(resolve, 1000));
-
-    // Generate a mock route
-    const mockRoute: Route = {
-      id: `route_${Date.now()}`,
-      input: { token: from.token, chain: from.chain, amount },
-      outputToken: { token: to.token, chain: to.chain },
-      hops: [
-        {
-          from: { token: from.token, chain: from.chain },
-          to: { token: 'WETH', chain: from.chain },
-          type: 'swap',
-          expectedOut: amount * 0.98,
-          feesUSD: 5.50,
-          liquidityDepth: 0.95,
-          confidence: 0.98,
-          meta: { dex: 'Uniswap V3', pool: 'ETH/WETH' }
-        },
-        {
-          from: { token: 'WETH', chain: from.chain },
-          to: { token: 'WETH', chain: to.chain },
-          type: 'bridge',
-          expectedOut: amount * 0.96,
-          feesUSD: 12.00,
-          liquidityDepth: 0.90,
-          confidence: 0.95,
-          meta: { bridge: 'Wormhole', estimatedTime: '5-10 min' }
-        },
-        {
-          from: { token: 'WETH', chain: to.chain },
-          to: { token: to.token, chain: to.chain },
-          type: 'swap',
-          expectedOut: amount * 0.94,
-          feesUSD: 3.25,
-          liquidityDepth: 0.92,
-          confidence: 0.97,
-          meta: { dex: 'SushiSwap', pool: 'WETH/USDC' }
-        }
-      ],
-      totalExpectedOut: amount * 0.94,
-      totalGasUSD: 20.75,
-      worstCaseOut: amount * 0.90,
-      computedAt: new Date().toISOString()
-    };
-
-    return NextResponse.json(mockRoute);
-  } catch (error) {
-    console.error('Route computation error:', error);
-    return NextResponse.json(
-      { error: 'Failed to compute route' },
-      { status: 500 }
-    );
-  }
+// Get supported assets from Pyth feeds
+function getSupportedVertices(): Vertex[] {
+  const availableTokens = getAvailableTokens();
+  
+  return availableTokens.map(symbol => ({
+    key: `${symbol}.ethereum`, // Default to ethereum chain
+    symbol: symbol,
+    chain: "ethereum"
+  }));
 }
 
+export async function POST(req: NextRequest) {
+  try {
+    const { source, target, hops } = await req.json();
+    
+    if (!source || !target) {
+      return NextResponse.json({ error: "Missing source or target token" }, { status: 400 });
+    }
+
+    // Build graph dynamically from supported tokens
+    const supportedVertices = getSupportedVertices();
+    const graph = await buildRouteGraph(supportedVertices, hops || 4);
+
+    // Compute best route
+    const routeResult = await findBestRoute(graph, source, target, hops || 4);
+
+    return NextResponse.json({
+      success: true,
+      route: routeResult.path,
+      estimatedOutput: routeResult.estimatedOutput,
+      steps: routeResult.steps,
+      totalWeight: routeResult.totalWeight,
+    });
+  } catch (err: any) {
+    console.error("Route API error:", err);
+    return NextResponse.json({ error: err.message || "Routing failed" }, { status: 500 });
+  }
+}
