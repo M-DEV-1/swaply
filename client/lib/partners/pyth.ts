@@ -17,28 +17,42 @@ export interface PythPrice {
 const HERMES_BASE = process.env.NEXT_PUBLIC_PYTH_HERMES_ENDPOINT || "https://hermes.pyth.network";
 const GET_PRICE_PATH = "/api/latest_price_feeds";
 
-export async function fetchPythPriceFeed(feedId: string): Promise<PythPrice | null> {
+export async function fetchPythPriceFeed(feedId: string, symbol: string): Promise<PythPrice | null> {
   const url = `${HERMES_BASE}${GET_PRICE_PATH}?ids[]=${feedId}`;
   try {
     const resp = await fetch(url);
     if (!resp.ok) {
       console.warn(`Pyth fetch failed for ${feedId}: ${resp.status}`);
       return null; // Return null instead of throwing to allow graceful fallback
+    } else {
+      console.log(`Fetched Pyth Price for ${symbol} successfully!!`);
     }
     const json = await resp.json();
 
-    const data = json?.parsed?.[0];
+    const data = json?.[0]; // Response is an array, not wrapped in 'parsed'
     if (!data) return null; // Unrecognized feed
+    
+    // Parse price and confidence as numbers (they come as strings)
+    const priceValue = parseFloat(data.price.price);
+    const confValue = parseFloat(data.price.conf);
+    const expo = data.price.expo;
+    
     // Calculation: normalizedPrice = price * 10^expo (expo is NEGATIVE for decimals)
-    const normalizedPrice = data.price.price * Math.pow(10, data.price.expo);
+    const normalizedPrice = priceValue * Math.pow(10, expo);
+    const normalizedConf = confValue * Math.pow(10, expo);
+    
+    // Parse EMA price
+    const emaPriceValue = parseFloat(data.ema_price.price);
+    const emaPrice = emaPriceValue * Math.pow(10, data.ema_price.expo);
+    
     return {
       id: feedId,
       price: normalizedPrice,
-      confidence: data.price.conf * Math.pow(10, data.price.expo),
-      expo: data.price.expo,
+      confidence: normalizedConf,
+      expo: expo,
       publishTime: data.price.publish_time,
-      emaPrice: data.ema_price.price * Math.pow(10, data.ema_price.expo),
-      symbol: data.product.symbol,
+      emaPrice: emaPrice,
+      symbol: symbol, 
     };
   } catch (err) {
     console.error("Pyth integration error:", err);
@@ -52,7 +66,7 @@ export async function fetchSymbolPrice(symbol: string): Promise<PythPrice | null
     console.warn("Unknown Pyth symbol/feedId mapping: " + symbol);
     return null;
   }
-  return fetchPythPriceFeed(id);
+  return fetchPythPriceFeed(id, symbol);
 }
 
 // for router.ts: get route price ratio (used as edge weight normalization)

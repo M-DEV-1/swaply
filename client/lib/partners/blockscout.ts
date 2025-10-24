@@ -35,6 +35,8 @@ if (!BLOCKSCOUT_BASE) {
 /* ---------- 1. Get ERC20 Token Balance ---------- 
   /api/v2/tokens/{tokenAddress}/holders/{address}
 */
+
+// get number of tokens such that number of edges ~ 10^5
 export async function getTokenBalance(
   address: string,
   tokenAddress: string

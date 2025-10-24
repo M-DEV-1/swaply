@@ -33,12 +33,27 @@ export const PYTH_FEED_IDS: Record<string, string> = {
 
 // Get available tokens from Pyth feeds
 export function getAvailableTokens(): string[] {
-  return Object.keys(PYTH_FEED_IDS).map(symbol => symbol.replace('/USD', ''));
+  return Object.keys(PYTH_FEED_IDS).map(symbol => {
+    // Handle special cases
+    if (symbol === 'MATICX/MATIC.RR') return 'MATIC';
+    if (symbol === 'BTC/USD') return 'BTC';
+    return symbol.replace('/USD', '');
+  });
 }
 
 // Get token info for UI
 export function getTokenInfo(symbol: string): { symbol: string; name: string; feedId: string } | null {
-  const feedId = PYTH_FEED_IDS[`${symbol}/USD`];
+  // Handle special cases
+  let feedKey: string;
+  if (symbol === 'MATIC') {
+    feedKey = 'MATICX/MATIC.RR';
+  } else if (symbol === 'BTC') {
+    feedKey = 'BTC/USD';
+  } else {
+    feedKey = `${symbol}/USD`;
+  }
+  
+  const feedId = PYTH_FEED_IDS[feedKey];
   if (!feedId) return null;
   
   return {
