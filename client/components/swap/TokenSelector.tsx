@@ -19,9 +19,10 @@ interface Token {
 }
 
 interface TokenSelectorProps {
-  selectedToken: Token;
-  onTokenSelect: (token: Token) => void;
-  label: string;
+  tokens: string[];
+  value?: string;
+  onChange: (token: string) => void;
+  placeholder?: string;
 }
 
 // Get tokens from Pyth feeds - only show tokens that have price feeds
@@ -78,17 +79,16 @@ function getPythTokens(): Token[] {
 
 const TOKENS = getPythTokens();
 
-export default function TokenSelector({ selectedToken, onTokenSelect, label }: TokenSelectorProps) {
+export default function TokenSelector({ tokens, value, onChange, placeholder }: TokenSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
 
-  const filteredTokens = TOKENS.filter(token =>
-    token.symbol.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    token.name.toLowerCase().includes(searchTerm.toLowerCase())
+  const filteredTokens = (tokens || []).filter(token =>
+    token.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const handleTokenSelect = (token: Token) => {
-    onTokenSelect(token);
+  const handleTokenSelect = (token: string) => {
+    onChange(token);
     setIsOpen(false);
     setSearchTerm('');
   };
@@ -98,55 +98,47 @@ export default function TokenSelector({ selectedToken, onTokenSelect, label }: T
       <Button
         variant="outline"
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full justify-between"
+        className="w-full justify-between h-9 text-sm"
       >
-        <div className="flex items-center space-x-2">
-          <div className="w-6 h-6 bg-primary rounded-full flex items-center justify-center text-xs text-primary-foreground">
-            {selectedToken.symbol.charAt(0)}
+        <div className="flex items-center space-x-1.5">
+          <div className="w-5 h-5 bg-primary rounded-full flex items-center justify-center text-[10px] text-primary-foreground font-bold">
+            {value ? value.charAt(0) : '?'}
           </div>
-          <span>{selectedToken.symbol}</span>
-          <Badge variant="secondary" className="text-xs">
-            {selectedToken.chain}
-          </Badge>
+          <span className="font-semibold">{value || placeholder || 'Select'}</span>
         </div>
-        <ChevronDown className="w-4 h-4" />
+        <ChevronDown className="w-3.5 h-3.5" />
       </Button>
 
       {isOpen && (
-        <Card className="absolute top-full left-0 right-0 mt-2 z-50 max-h-80 overflow-hidden">
-          <div className="p-3 border-b">
+        <Card className="absolute top-full left-0 right-0 min-w-[200px] mt-2 z-50 max-h-72 overflow-hidden shadow-xl">
+          <div className="p-2 border-b">
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
               <Input
                 placeholder="Search tokens..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10"
+                className="pl-8 h-8 text-sm"
               />
             </div>
           </div>
           
-          <div className="max-h-60 overflow-y-auto">
+          <div className="max-h-56 overflow-y-auto">
             {filteredTokens.map((token) => (
               <button
-                key={`${token.token}-${token.chain}`}
+                key={token}
                 onClick={() => handleTokenSelect(token)}
-                className="w-full p-3 text-left hover:bg-muted transition-colors"
+                className="w-full px-3 py-2 text-left hover:bg-muted transition-colors flex items-center justify-between group"
               >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-3">
-                    <div className="w-8 h-8 bg-primary rounded-full flex items-center justify-center text-xs text-primary-foreground">
-                      {token.symbol.charAt(0)}
-                    </div>
-                    <div>
-                      <div className="font-medium">{token.symbol}</div>
-                      <div className="text-sm text-muted-foreground">{token.name}</div>
-                    </div>
+                <div className="flex items-center space-x-2">
+                  <div className="w-7 h-7 bg-primary rounded-full flex items-center justify-center text-xs text-primary-foreground font-semibold">
+                    {token.charAt(0)}
                   </div>
-                  <Badge variant="outline" className="text-xs">
-                    {token.chain}
-                  </Badge>
+                  <div className="font-medium text-sm">{token}</div>
                 </div>
+                {value === token && (
+                  <div className="w-2 h-2 bg-primary rounded-full"></div>
+                )}
               </button>
             ))}
           </div>

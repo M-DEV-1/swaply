@@ -1,6 +1,12 @@
-// src/types/route.ts
-// temporary type list - will write detailed comments on usage, and decision
 export type Chain = 'ethereum' | 'polygon' | 'avail' | string;
+
+export interface Token {
+  token: string;
+  chain: Chain;
+  symbol?: string;
+  name?: string;
+  decimals?: number;
+}
 
 export interface Node {
   token: string; 
@@ -27,4 +33,30 @@ export interface Route {
   totalGasUSD: number;
   worstCaseOut: number;
   computedAt: string;
+}
+
+// Algorithm-specific route types
+export interface DijkstraMetrics {
+  executionTimeMs: number;
+  gasEstimate: number;
+  visitedNodes: number;
+  pathLength: number;
+}
+
+export interface PSBDijkstraMetrics extends DijkstraMetrics {
+  barrierCount: number;
+}
+
+export interface AlgorithmResult {
+  route: Route;
+  metrics: DijkstraMetrics | PSBDijkstraMetrics;
+}
+
+export interface RouteComparison {
+  timestamp: string;
+  sourceToken: string;
+  targetToken: string;
+  amount: string;
+  classic: AlgorithmResult;
+  psb: AlgorithmResult;
 }

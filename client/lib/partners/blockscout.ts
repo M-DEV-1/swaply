@@ -26,7 +26,7 @@ export interface GasPrice {
 }
 
 const BLOCKSCOUT_BASE =
-  process.env.NEXT_PUBLIC_BLOCKSCOUT_BASE;
+  process.env.NEXT_PUBLIC_BLOCKSCOUT_BASE || "https://hrishi-eth.cloud.blockscout.com";
 
 if (!BLOCKSCOUT_BASE) {
   throw new Error("BLOCKSCOUT_BASE is not defined in environment variables");

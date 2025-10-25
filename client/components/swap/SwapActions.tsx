@@ -2,12 +2,12 @@
 
 import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Route } from '@/lib/types/route';
+import { RouteComparison } from '@/lib/core/route-comparison';
 import { useAccount, useWriteContract } from 'wagmi';
 import { ArrowUpDown, Loader2 } from 'lucide-react';
 
 interface SwapActionsProps {
-  route: Route | null;
+  route: RouteComparison | null;
 }
 
 export default function SwapActions({ route }: SwapActionsProps) {
@@ -20,10 +20,9 @@ export default function SwapActions({ route }: SwapActionsProps) {
     
     setIsExecuting(true);
     try {
-      // TODO: Implement actual swap execution logic
-      // This would involve calling the appropriate smart contracts
-      // based on the route hops
-      console.log('Executing swap for route:', route);
+      // Use PSB route by default as it should be more efficient
+      const selectedRoute = route.psb.route;
+      console.log('Executing swap with PSB route:', selectedRoute);
       
       // Simulate swap execution
       await new Promise(resolve => setTimeout(resolve, 2000));
@@ -47,6 +46,8 @@ export default function SwapActions({ route }: SwapActionsProps) {
     );
   }
 
+  const gasEstimate = route.psb.metrics.gasEstimate;
+
   return (
     <div className="flex flex-col space-y-2">
       <Button
@@ -63,13 +64,13 @@ export default function SwapActions({ route }: SwapActionsProps) {
         ) : (
           <>
             <ArrowUpDown className="w-4 h-4 mr-2" />
-            Execute Swap
+            Execute Swap (PSB Route)
           </>
         )}
       </Button>
       
       <div className="text-xs text-muted-foreground text-center">
-        Gas: ~${route.totalGasUSD.toFixed(2)}
+        Gas: ~${gasEstimate.toFixed(2)}
       </div>
     </div>
   );
