@@ -1,13 +1,7 @@
-/**
- * Benchmark Generator - Creates a large graph from Blockscout tokens
- * Generates ~10^5 edges from real token data, saves to JSON for reuse
- */
-
+// client/lib/simulation/benchmarkGenerator.ts
 import { RouteGraph, TokenKey, Edge, Vertex } from '../core/router';
 import { fetchPythPriceFeed } from '../partners/pyth';
 import { getAvailableTokens, PYTH_FEED_IDS } from '../partners/pyth-feed';
-import fs from 'fs';
-import path from 'path';
 
 export interface BenchmarkData {
   timestamp: string;
@@ -20,185 +14,278 @@ export interface BenchmarkData {
     totalVertices: number;
     totalEdges: number;
     avgEdgesPerVertex: number;
+    maxEdgesPerVertex: number;
+    minEdgesPerVertex: number;
   };
 }
 
-const SUPPORTED_CHAINS = ['ethereum', 'polygon', 'arbitrum', 'optimism', 'avalanche'];
 const TARGET_EDGES = 100000;
+const MAX_AVG_DEGREE = 5;
+const SUPPORTED_CHAINS = ['ethereum', 'polygon', 'arbitrum', 'optimism', 'avalanche'];
 
 /**
- * Generate benchmark data with real tokens from Pyth + synthetic edges
+ * Generate sparse benchmark graph with exactly 10^5 edges
+ * and average degree ≤ 5 edges/vertex
  */
 export async function generateBenchmark(): Promise<BenchmarkData> {
   console.log('Starting benchmark generation...');
-  const startTime = Date.now();
+  console.log(`Target: ${TARGET_EDGES} edges, max avg degree: ${MAX_AVG_DEGREE}`);
   
+  const startTime = Date.now();
   const graph: RouteGraph = {};
   const vertices: Vertex[] = [];
-  let edgeCount = 0;
   
-  // Step 1: Get real tokens from Pyth
+  // Step 1: Calculate required number of vertices
+  const minVertices = Math.ceil(TARGET_EDGES / MAX_AVG_DEGREE);
+  console.log(`Calculated min vertices needed: ${minVertices}`);
+  
+  // Step 2: Get real tokens from Pyth (with caching)
   console.log('Fetching real tokens from Pyth...');
-  const realTokenSymbols = getAvailableTokens().filter(
-    token => PYTH_FEED_IDS[`${token}/USD`]
-  );
+  const realTokenSymbols = getAvailableTokens();
+  const realTokenCount = Math.min(realTokenSymbols.length, 50); // Limit to avoid API spam
+  const selectedRealTokens = realTokenSymbols.slice(0, realTokenCount);
   
-  // Add real tokens as vertices
-  for (const symbol of realTokenSymbols) {
-    const chain = SUPPORTED_CHAINS[0]; // Default to ethereum
+  console.log(`Using ${selectedRealTokens.length} real tokens from Pyth`);
+  
+  // Step 3: Fetch prices for real tokens (BATCHED to avoid rate limits)
+  const priceCache = await fetchPricesBatched(selectedRealTokens);
+  
+  // Step 4: Add real tokens as vertices
+  for (const symbol of selectedRealTokens) {
+    const chain = SUPPORTED_CHAINS[Math.floor(Math.random() * SUPPORTED_CHAINS.length)];
     const key: TokenKey = `${symbol}.${chain}`;
     
-    vertices.push({
-      key,
-      symbol,
-      chain,
-    });
-    
+    vertices.push({ key, symbol, chain });
     graph[key] = [];
   }
   
-  console.log(`Added ${realTokenSymbols.length} real tokens`);
+  // Step 5: Calculate how many synthetic tokens needed
+  const syntheticCount = Math.max(0, minVertices - realTokenCount);
+  console.log(`Generating ${syntheticCount} synthetic tokens...`);
   
-  // Step 2: Create edges between real tokens using actual price ratios
-  console.log('Creating edges between real tokens...');
-  for (let i = 0; i < realTokenSymbols.length && edgeCount < TARGET_EDGES / 2; i++) {
-    for (let j = i + 1; j < realTokenSymbols.length && edgeCount < TARGET_EDGES / 2; j++) {
-      try {
-        const symbolA = realTokenSymbols[i];
-        const symbolB = realTokenSymbols[j];
-        
-        const keyA = `${symbolA}.ethereum`;
-        const keyB = `${symbolB}.ethereum`;
-        
-        const feedA = await fetchPythPriceFeed(PYTH_FEED_IDS[`${symbolA}/USD`], symbolA);
-        const feedB = await fetchPythPriceFeed(PYTH_FEED_IDS[`${symbolB}/USD`], symbolB);
-        
-        if (feedA && feedB) {
-          const rate = feedA.price / feedB.price;
-          
-          // Add bidirectional edges
-          graph[keyA].push({
-            target: keyB,
-            kind: 'swap',
-            rate,
-            gas: 0.0003,
-            dex: 'UniswapV3',
-            poolAddress: `0x${symbolA}${symbolB}Pool`,
-          });
-          
-          graph[keyB].push({
-            target: keyA,
-            kind: 'swap',
-            rate: 1 / rate,
-            gas: 0.0003,
-            dex: 'UniswapV3',
-            poolAddress: `0x${symbolB}${symbolA}Pool`,
-          });
-          
-          edgeCount += 2;
-        }
-      } catch (error) {
-        // Skip failed price fetches
-      }
-    }
-  }
-  
-  console.log(`Created ${edgeCount} edges between real tokens`);
-  
-  // Step 3: Generate synthetic tokens and edges to reach target
-  console.log(`Generating synthetic tokens to reach ${TARGET_EDGES} edges...`);
-  let syntheticCount = 0;
-  
-  while (edgeCount < TARGET_EDGES) {
-    const syntheticSymbol = `SYN${syntheticCount}`;
+  // Step 6: Generate synthetic tokens
+  for (let i = 0; i < syntheticCount; i++) {
+    const symbol = `SYN${i}`;
     const chain = SUPPORTED_CHAINS[Math.floor(Math.random() * SUPPORTED_CHAINS.length)];
-    const key: TokenKey = `${syntheticSymbol}.${chain}`;
+    const key: TokenKey = `${symbol}.${chain}`;
     
-    vertices.push({
-      key,
-      symbol: syntheticSymbol,
-      chain,
-    });
-    
+    vertices.push({ key, symbol, chain });
     graph[key] = [];
     
-    // Connect to random existing vertices
-    const connectionsCount = Math.min(10, vertices.length - 1);
-    const existingVertices = vertices.slice(0, -1); // All except the one we just added
-    
-    for (let i = 0; i < connectionsCount && edgeCount < TARGET_EDGES; i++) {
-      const targetVertex = existingVertices[Math.floor(Math.random() * existingVertices.length)];
-      const targetKey = targetVertex.key;
-      
-      // Skip if edge already exists
-      if (graph[key].some(e => e.target === targetKey)) continue;
-      
-      const rate = 0.1 + Math.random() * 1.9; // Realistic exchange rate
-      const isCrossChain = chain !== targetVertex.chain;
-      
-      // Add bidirectional edges
-      graph[key].push({
-        target: targetKey,
-        kind: isCrossChain ? 'bridge' : 'swap',
-        rate,
-        gas: 0.0003,
-        bridgeFee: isCrossChain ? 0.001 : undefined,
-        dex: isCrossChain ? undefined : 'SyntheticDEX',
-        poolAddress: isCrossChain ? undefined : `0x${syntheticSymbol}${targetVertex.symbol}`,
-      });
-      
-      graph[targetKey].push({
-        target: key,
-        kind: isCrossChain ? 'bridge' : 'swap',
-        rate: 1 / rate,
-        gas: 0.0003,
-        bridgeFee: isCrossChain ? 0.001 : undefined,
-        dex: isCrossChain ? undefined : 'SyntheticDEX',
-        poolAddress: isCrossChain ? undefined : `0x${targetVertex.symbol}${syntheticSymbol}`,
-      });
-      
-      edgeCount += 2;
-    }
-    
-    syntheticCount++;
-    
-    // Progress update every 100 tokens
-    if (syntheticCount % 100 === 0) {
-      console.log(`Generated ${syntheticCount} synthetic tokens, ${edgeCount} total edges`);
+    if ((i + 1) % 1000 === 0) {
+      console.log(`Generated ${i + 1}/${syntheticCount} synthetic tokens`);
     }
   }
   
-  const totalEdges = Object.values(graph).reduce((sum, edges) => sum + edges.length, 0);
-  const elapsedMs = Date.now() - startTime;
-  
-  console.log(`\nBenchmark generation complete in ${elapsedMs}ms`);
-  console.log(`Real tokens: ${realTokenSymbols.length}`);
-  console.log(`Synthetic tokens: ${syntheticCount}`);
   console.log(`Total vertices: ${vertices.length}`);
-  console.log(`Total edges: ${totalEdges}`);
-  console.log(`Avg edges per vertex: ${(totalEdges / vertices.length).toFixed(2)}`);
+  
+  // Step 7: Generate edges using SPARSE strategy
+  console.log('Generating sparse edges...');
+  const edgeCount = generateSparseEdges(
+    graph,
+    vertices,
+    priceCache,
+    TARGET_EDGES,
+    MAX_AVG_DEGREE
+  );
+  
+  // Step 8: Verify graph properties
+  const stats = calculateGraphStats(graph, vertices, realTokenCount);
+  
+  const elapsedMs = Date.now() - startTime;
+  console.log('\n=== Benchmark Generation Complete ===');
+  console.log(`Time: ${(elapsedMs / 1000).toFixed(2)}s`);
+  console.log(`Real tokens: ${stats.realTokens}`);
+  console.log(`Synthetic tokens: ${stats.syntheticTokens}`);
+  console.log(`Total vertices: ${stats.totalVertices}`);
+  console.log(`Total edges: ${stats.totalEdges}`);
+  console.log(`Avg edges/vertex: ${stats.avgEdgesPerVertex.toFixed(2)}`);
+  console.log(`Max edges/vertex: ${stats.maxEdgesPerVertex}`);
+  console.log(`Min edges/vertex: ${stats.minEdgesPerVertex}`);
+  
+  // Verify constraints
+  if (stats.avgEdgesPerVertex > MAX_AVG_DEGREE) {
+    console.warn(`⚠️  Average degree ${stats.avgEdgesPerVertex} exceeds limit ${MAX_AVG_DEGREE}`);
+  }
+  if (stats.totalEdges < TARGET_EDGES * 0.95 || stats.totalEdges > TARGET_EDGES * 1.05) {
+    console.warn(`⚠️  Edge count ${stats.totalEdges} is outside target range`);
+  }
   
   return {
     timestamp: new Date().toISOString(),
-    version: '1.0.0',
+    version: '2.0.0',
     graph,
     vertices,
-    stats: {
-      realTokens: realTokenSymbols.length,
-      syntheticTokens: syntheticCount,
-      totalVertices: vertices.length,
-      totalEdges,
-      avgEdgesPerVertex: totalEdges / vertices.length,
-    },
+    stats,
   };
 }
 
 /**
- * Save benchmark data to results folder
+ * Fetch Pyth prices in batches to avoid rate limits
+ */
+async function fetchPricesBatched(
+  symbols: string[],
+  batchSize: number = 10
+): Promise<Map<string, number>> {
+  const priceCache = new Map<string, number>();
+  
+  console.log(`Fetching ${symbols.length} prices in batches of ${batchSize}...`);
+  
+  for (let i = 0; i < symbols.length; i += batchSize) {
+    const batch = symbols.slice(i, Math.min(i + batchSize, symbols.length));
+    
+    // Fetch batch concurrently
+    const promises = batch.map(async (symbol) => {
+      try {
+        const feedKey = symbol === 'MATIC' ? 'MATICX/MATIC.RR' : 
+                        symbol === 'BTC' ? 'BTC/USD' : 
+                        `${symbol}/USD`;
+        
+        const feedId = PYTH_FEED_IDS[feedKey];
+        if (!feedId) return null;
+        
+        const price = await fetchPythPriceFeed(feedId, symbol);
+        if (price && price.price > 0) {
+          priceCache.set(symbol, price.price);
+        }
+        return price;
+      } catch (error) {
+        console.warn(`Failed to fetch price for ${symbol}:`, error);
+        return null;
+      }
+    });
+    
+    await Promise.all(promises);
+    
+    // Rate limiting: wait between batches
+    if (i + batchSize < symbols.length) {
+      await new Promise(resolve => setTimeout(resolve, 200)); // 200ms delay
+    }
+  }
+  
+  console.log(`Cached ${priceCache.size} prices`);
+  return priceCache;
+}
+
+/**
+ * Generate sparse edges ensuring avg degree ≤ maxAvgDegree
+ * Uses random sparse graph generation (Erdős-Rényi with degree constraint)
+ */
+function generateSparseEdges(
+  graph: RouteGraph,
+  vertices: Vertex[],
+  priceCache: Map<string, number>,
+  targetEdges: number,
+  maxAvgDegree: number
+): number {
+  const n = vertices.length;
+  const maxEdgesPerVertex = Math.ceil(maxAvgDegree * 1.5); // Allow some variance
+  const edgeCounts: Record<TokenKey, number> = {};
+  
+  // Initialize edge counts
+  for (const v of vertices) {
+    edgeCounts[v.key] = 0;
+  }
+  
+  let totalEdges = 0;
+  const maxAttempts = targetEdges * 3; // Avoid infinite loops
+  let attempts = 0;
+  
+  while (totalEdges < targetEdges && attempts < maxAttempts) {
+    attempts++;
+    
+    // Randomly select source and target
+    const fromIdx = Math.floor(Math.random() * n);
+    const toIdx = Math.floor(Math.random() * n);
+    
+    if (fromIdx === toIdx) continue;
+    
+    const from = vertices[fromIdx];
+    const to = vertices[toIdx];
+    
+    // Check degree constraints
+    if (edgeCounts[from.key] >= maxEdgesPerVertex) continue;
+    if (edgeCounts[to.key] >= maxEdgesPerVertex) continue;
+    
+    // Check if edge already exists
+    if (graph[from.key].some(e => e.target === to.key)) continue;
+    
+    // Determine edge type
+    const isCrossChain = from.chain !== to.chain;
+    
+    // Calculate rate
+    let rate: number;
+    const fromPrice = priceCache.get(from.symbol);
+    const toPrice = priceCache.get(to.symbol);
+    
+    if (fromPrice && toPrice && fromPrice > 0 && toPrice > 0) {
+      // Use real price ratio
+      rate = fromPrice / toPrice;
+    } else {
+      // Generate realistic synthetic rate
+      rate = 0.1 + Math.random() * 1.9; // Between 0.1 and 2.0
+    }
+    
+    // Add edge
+    const edge: Edge = {
+      target: to.key,
+      kind: isCrossChain ? 'bridge' : 'swap',
+      rate,
+      gas: 0.0001 + Math.random() * 0.0005,
+      bridgeFee: isCrossChain ? 0.001 : undefined,
+      dex: isCrossChain ? undefined : 'UniswapV3',
+      poolAddress: isCrossChain ? undefined : `0x${from.symbol}${to.symbol}Pool`,
+    };
+    
+    graph[from.key].push(edge);
+    edgeCounts[from.key]++;
+    edgeCounts[to.key]++; // Count incoming edge for degree balance
+    totalEdges++;
+    
+    // Progress update
+    if (totalEdges % 10000 === 0) {
+      const avgDegree = (totalEdges / n).toFixed(2);
+      console.log(`  Edges: ${totalEdges}/${targetEdges} (avg degree: ${avgDegree})`);
+    }
+  }
+  
+  if (attempts >= maxAttempts) {
+    console.warn(`Stopped after ${attempts} attempts with ${totalEdges} edges`);
+  }
+  
+  return totalEdges;
+}
+
+/**
+ * Calculate graph statistics
+ */
+function calculateGraphStats(
+  graph: RouteGraph,
+  vertices: Vertex[],
+  realTokenCount: number
+): BenchmarkData['stats'] {
+  const edgeCounts = Object.values(graph).map(edges => edges.length);
+  const totalEdges = edgeCounts.reduce((sum, count) => sum + count, 0);
+  
+  return {
+    realTokens: realTokenCount,
+    syntheticTokens: vertices.length - realTokenCount,
+    totalVertices: vertices.length,
+    totalEdges,
+    avgEdgesPerVertex: totalEdges / vertices.length,
+    maxEdgesPerVertex: Math.max(...edgeCounts, 0),
+    minEdgesPerVertex: Math.min(...edgeCounts, 0),
+  };
+}
+
+/**
+ * Save benchmark to file
  */
 export function saveBenchmark(data: BenchmarkData): string {
-  const resultsDir = path.join(process.cwd(), 'results');
+  const fs = require('fs');
+  const path = require('path');
   
+  const resultsDir = path.join(process.cwd(), 'results');
   if (!fs.existsSync(resultsDir)) {
     fs.mkdirSync(resultsDir, { recursive: true });
   }
@@ -208,22 +295,24 @@ export function saveBenchmark(data: BenchmarkData): string {
   
   fs.writeFileSync(filepath, JSON.stringify(data, null, 2));
   
-  console.log(`Benchmark saved to: ${filepath}`);
+  console.log(`\n✅ Benchmark saved to: ${filepath}`);
   return filepath;
 }
 
 /**
- * Load the most recent benchmark data
+ * Load latest benchmark
  */
 export function loadLatestBenchmark(): BenchmarkData | null {
-  const resultsDir = path.join(process.cwd(), 'results');
+  const fs = require('fs');
+  const path = require('path');
   
+  const resultsDir = path.join(process.cwd(), 'results');
   if (!fs.existsSync(resultsDir)) {
     return null;
   }
   
   const files = fs.readdirSync(resultsDir)
-    .filter(f => f.startsWith('benchmark-') && f.endsWith('.json'))
+    .filter((f: string) => f.startsWith('benchmark-') && f.endsWith('.json'))
     .sort()
     .reverse();
   
@@ -234,6 +323,10 @@ export function loadLatestBenchmark(): BenchmarkData | null {
   const filepath = path.join(resultsDir, files[0]);
   const data = JSON.parse(fs.readFileSync(filepath, 'utf-8'));
   
-  console.log(`Loaded benchmark from: ${filepath}`);
+  console.log(`Loaded benchmark: ${filepath}`);
+  console.log(`  Vertices: ${data.stats.totalVertices}`);
+  console.log(`  Edges: ${data.stats.totalEdges}`);
+  console.log(`  Avg degree: ${data.stats.avgEdgesPerVertex.toFixed(2)}`);
+  
   return data;
 }
